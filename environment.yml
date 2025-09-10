@@ -1,0 +1,15 @@
+name: pathseq-t2t
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bash
+  - samtools>=1.16
+  - bwa>=0.7.18
+  - gatk>=4.0
+  - picard>=3.1.1
+  - kraken2>=2.1.3
+  - metaphlan>=4.1.1
+  - bowtie2>=2.5.4
+  - gzip>=1.12
+
