@@ -1,6 +1,6 @@
 # pathseq-t2t
 
-A host subtraction and filtering pipeline for identifying low-biomass microbial signals in sequencing data, designed for use with modern references and microbial classifiers.
+A host subtraction, quality control, and classification  pipeline for identifying low-biomass microbial signals in sequencing data.
 
 ---
 
