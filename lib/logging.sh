@@ -1,6 +1,25 @@
-log_level=${log_level:-1} # 0=quiet, 1=info, 2=debug
+#!/usr/bin/env bash
 
-log()   { [ "${log_level}" -ge 1 ] && printf '[INFO] %s\n' "$*" >&2; }
-debug() { [ "${log_level}" -ge 2 ] && printf '[DEBUG] %s\n' "$*" >&2; }
-err()   { printf '[ERROR] %s\n' "$*" >&2; }
-die()   { err "$*"; exit 2; }
+# Logging utility with timestamp + severity.
+# Format: 00:38:03.980 INFO  message
+
+# Default log level: 1 = INFO
+: "${log_level:=1}"
+
+_log_timestamp() {
+  date +"%H:%M:%S.%3N"
+}
+
+_log() {
+  local level="$1"
+  local min_level="$2"
+  shift 2
+  if [[ ${log_level} -ge ${min_level} ]]; then
+    printf "%s %-5s %s\n" "$(_log_timestamp)" "${level}" "$*"
+  fi
+}
+
+log() { _log INFO 1 "$@"; }
+warn() { _log WARN 0 "$@"; }
+err() { _log ERROR 0 "$@"; }
+die() { err "$@"; exit 1; }

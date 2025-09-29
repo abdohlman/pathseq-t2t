@@ -98,11 +98,267 @@ _parse_first_version() { # print first x.y[.z] from stdin
   grep -Eo '[0-9]+(\.[0-9]+){1,3}' | head -n1
 }
 
+# Returns 0 if GATK >= 4 is found; prints the detected version to stdout.
+_require_gatk4() {
+  if ! command -v gatk >/dev/null 2>&1; then
+    die "GATK not found on PATH (need gatk >= 4)."
+  fi
+
+  # Avoid set -e/pipefail breaking on non-zero; capture both stdout & stderr.
+  local ver_line
+  ver_line="$(( gatk --version 2>&1 || true ) | head -n1)"
+
+  # Fallbacks: some builds put version in --help output.
+  if [[ -z "$ver_line" ]]; then
+    ver_line="$(( gatk --help 2>&1 || true ) | head -n3 | tr -d '\r')"
+  fi
+
+  # Extract a semantic version like 4.3.0.0
+  local ver
+  ver="$(grep -Eo '([0-9]+\.){1,3}[0-9]+' <<<"$ver_line" | head -n1)"
+
+  if [[ -z "$ver" ]]; then
+    die "Could not determine GATK version. Probe output: ${ver_line:-<empty>}"
+  fi
+
+  # Compare versions (needs sort -V)
+  if [[ "$(printf '%s\n' '4.0.0' "$ver" | sort -V | head -n1)" != "4.0.0" ]]; then
+    die "GATK >= 4 required (found $ver)."
+  fi
+
+  log "Detected GATK version: ${ver}"
+
+  # printf '%s\n' "$ver"
+}
+
 _require_java17() {
   local java_major
   java_major=$(java -version 2>&1 | head -n1 | sed -E 's/.*version "([0-9]+).*/\1/')
   [[ "${java_major:-0}" -eq 17 ]] || die "Java 17 required (found major ${java_major:-unknown})."
 }
+
+_require_picard() {
+  if [[ -z "${PICARD_JAR}" || ! -f "${PICARD_JAR}" ]]; then
+    die "--picard-jar not provided or invalid. You can download Picard from the following location:
+      https://github.com/broadinstitute/picard/releases/latest
+    Download the latest version and provide the path to the picard.jar file when running the script."
+  fi
+  # Check if the provided Picard JAR file exists
+  require_file "${PICARD_JAR}"
+  log "Picard found at: ${PICARD_JAR}"
+}
+
+_require_bwa() {
+  if ! command -v bwa >/dev/null 2>&1; then
+    die "bwa not found on PATH.
+
+Install via conda:
+  conda install -c bioconda bwa
+
+Or build from source:
+  git clone https://github.com/lh3/bwa.git
+  cd bwa && make
+  export PATH=\$PWD:\$PATH"
+  fi
+
+  # Capture version text without tripping 'set -e'
+  local raw
+  raw="$(( bwa 2>&1 || true ) | head -n5)"
+
+  # Try to extract something like 0.7.17, 0.7.17-r1188, 0.7.17-r1198-dirty, etc.
+  local ver
+  ver="$(grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' <<<"$raw" | head -n1)"
+
+  if [[ -z "$ver" ]]; then
+    die "Could not determine bwa version from output:
+$raw"
+  fi
+
+  # Require >= 0.7.17 for stable 'bwa mem'
+  if [[ "$(printf '%s\n' '0.7.17' "$ver" | sort -V | head -n1)" != "0.7.17" ]]; then
+    die "bwa >= 0.7.17 required for 'bwa mem' (found $ver).
+
+bwa reported:
+$raw
+
+Upgrade via conda:
+  conda install -c bioconda bwa>=0.7.17"
+  fi
+
+  log "Detected bwa version: $ver"
+}
+
+
+# Ensure kraken2 executable is available (optional version log).
+_require_kraken2() {
+  command -v kraken2 >/dev/null 2>&1 || die "kraken2 not found on PATH."
+  local kver
+  kver="$(kraken2 --version 2>&1 | head -n1 | _parse_first_version || true)"
+  [[ -n "$kver" ]] && log "Detected Kraken2 version: $kver"
+}
+
+# Ensure MetaPhlAn v4 executable is available and version is >= 4.0.0.
+_require_metaphlan4() {
+  command -v metaphlan >/dev/null 2>&1 || die "metaphlan not found on PATH."
+  local mver_line mver
+  mver_line="$(metaphlan --version 2>&1 | head -n1 || true)"
+  mver="$(printf '%s' "$mver_line" | _parse_first_version || true)"
+  [[ -n "$mver" ]] || die "Could not determine MetaPhlAn version (got: ${mver_line:-<empty>})."
+  _semver_ge "4.0.0" "$mver" || die "MetaPhlAn >= 4.0.0 required (found $mver)."
+  log "Detected MetaPhlAn version: $mver"
+}
+
+
+# Helper function to ensure the required PathSeq host directory is available
+_require_hostdir() {
+  # Prepare the message to be displayed
+  local hostdir_message="HOSTDIR is not set or missing required files. You must specify it (contains pathseq_host.bfi & pathseq_host.fa.img).
+
+You can download and prepare the necessary files using the following commands:
+
+  mkdir host_dir
+  gcloud storage cp gs://gatk-best-practices/pathseq/resources/pathseq_host.bfi gs://gatk-best-practices/pathseq/resources/pathseq_host.fa.img ./host_dir
+  export HOSTDIR=\$PWD/host_dir
+
+Note: The host directory requires approximately 14 GB of space."
+
+  # Check if HOSTDIR is set
+  if [[ -z "${HOSTDIR}" ]]; then
+    echo "$hostdir_message"
+    die "HOSTDIR is not set."
+  fi
+
+  # Check if required files are present in the specified HOSTDIR
+  local bfi_file="${HOSTDIR}/pathseq_host.bfi"
+  local fa_img_file="${HOSTDIR}/pathseq_host.fa.img"
+
+  if [[ ! -f "$bfi_file" || ! -f "$fa_img_file" ]]; then
+    echo "$hostdir_message"
+    die "HOSTDIR is missing required files."
+  fi
+
+  log "HOSTDIR verified: ${HOSTDIR}"
+}
+
+# Resolve and validate the T2T reference FASTA.
+# Usage: ref_path="$(_require_t2tref "<optional_path_from_flag>")"
+_require_t2tref() {
+  local ref_in="${1:-}" src="--reference"
+  if [[ -z "${ref_in}" ]]; then
+    ref_in="${T2TREF:-}"
+    src="\$T2TREF"
+  fi
+
+  if [[ -z "${ref_in}" || ! -f "${ref_in}" ]]; then
+    local MSG="No T2T reference found.
+Provide a path via --reference <t2t.fa> or set \$T2TREF to the FASTA file.
+
+You can obtain the T2T-CHM13v2.0 reference from NCBI and index it like this:
+
+  mkdir -p t2tref && cd t2tref
+  wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna.gz
+  gunzip GCF_009914755.1_T2T-CHM13v2.0_genomic.fna.gz
+
+  # Build indexes (requires bwa and samtools)
+  bwa index GCF_009914755.1_T2T-CHM13v2.0_genomic.fna
+  samtools faidx GCF_009914755.1_T2T-CHM13v2.0_genomic.fna
+
+  # Use it for this pipeline
+  export T2TREF=\$PWD/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna
+
+Then re-run this command."
+    die "${MSG}"
+  fi
+
+  log "Using T2T reference: ${ref_in}"
+}
+
+
+
+# Require a Kraken2 database directory
+# Usage: _require_kraken2db /path/to/kraken2_db
+_require_kraken2db() {
+  local db="$1"
+  if [[ -z "${db}" ]]; then
+    die "No Kraken2 DB provided (--kraken2-db)."
+  fi
+  if [[ ! -d "${db}" ]]; then
+    die "Kraken2 DB directory not found: ${db}
+See: https://benlangmead.github.io/aws-indexes/k2"
+  fi
+
+  # Kraken2 requires these core files
+  for f in hash.k2d opts.k2d taxo.k2d; do
+    [[ -f "${db}/${f}" ]] || die "Kraken2 DB incomplete: missing ${f} in ${db}
+See: https://benlangmead.github.io/aws-indexes/k2"
+  done
+
+  log "Detected valid Kraken2 DB: ${db}"
+}
+
+# Require a MetaPhlAn4 database (Bowtie2 index basename)
+# Usage: _require_metaphlan4db /path/to/mpa_index
+_require_metaphlan4db() {
+  local idx="$1"
+  if [[ -z "${idx}" ]]; then
+    die "No MetaPhlAn DB index provided (--metaphlan-index)."
+  fi
+
+  local base="${idx}"
+  local missing=()
+  for ext in 1.bt2 2.bt2 3.bt2 4.bt2 rev.1.bt2 rev.2.bt2; do
+    [[ -f "${base}.${ext}" ]] || missing+=("${base}.${ext}")
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    die "MetaPhlAn DB appears incomplete at ${base}.
+Missing files:
+  ${missing[*]}
+See: http://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/"
+  fi
+
+  log "Detected valid MetaPhlAn4 DB index: ${base}"
+}
+
+
+
+
+# Validate a BAM by sleeping briefly (to allow EOF flush), then quickcheck and a full read.
+# Usage: bam_check_or_die <bam_path> [context_label]
+bam_check_or_die() {
+  local bam="$1"
+  local label="${2:-}"
+  [[ -f "$bam" ]] || die "Expected BAM missing: $bam${label:+ ($label)}"
+
+  # Give the filesystem a moment to flush BGZF EOF blocks on network/distributed FS.
+  sleep 1
+
+  if ! samtools quickcheck "$bam" >/dev/null 2>&1; then
+    die "samtools quickcheck failed: $bam${label:+ ($label)}"
+  fi
+  # Full read to catch hidden I/O issues (suppress output)
+  if ! samtools view -c "$bam" >/dev/null 2>&1; then
+    die "Failed to fully read BAM (samtools view -c): $bam${label:+ ($label)}"
+  fi
+  log "BAM OK: $bam${label:+ ($label)}"
+}
+
+
+ubam_check_or_die() {
+  local bam="$1"
+  local label="${2:-}"
+  [[ -f "$bam" ]] || die "Expected BAM missing: $bam${label:+ ($label)}"
+
+  sleep 1
+  if ! samtools quickcheck -u "$bam" >/dev/null 2>&1; then
+    die "samtools quickcheck -u failed: $bam${label:+ ($label)}"
+  fi
+  if ! samtools view -c "$bam" >/dev/null 2>&1; then
+    die "Failed to fully read BAM (samtools view -c): $bam${label:+ ($label)}"
+  fi
+  log "BAM OK: $bam${label:+ ($label)}"
+}
+
 
 # ---------------------------- Subcommands ----------------------------
 
@@ -127,7 +383,7 @@ cmd_prefilter() {
 Usage: pathseq-t2t prefilter \
   --input-bam <bam> \
   --aligner dragen|bwa \
-  [--regions-to-exclude <bed>] \
+  --regions-to-exclude <bed|None> \
   [--unaligned-out <bam>] [--excluded-out <bam>] \
   [--flagstat-out <tsv>] \
   [--threads <int, default: auto>] \
@@ -135,10 +391,8 @@ Usage: pathseq-t2t prefilter \
 
 Notes:
 - --aligner is required (dragen or bwa).
-- If --sample-id is not provided, it defaults to the basename of --input-bam.
-- If --regions-to-exclude is not provided, a warning is shown about viral decoy contigs and how to build a BED from the BAM header.
-- Outputs go to $OUTDIR/{filter_stats,bams} by default.
-- After running, both output BAMs are checked with `samtools quickcheck`. On failure, files are kept; the command exits non-zero.
+- --regions-to-exclude is required; pass 'None' to skip excluding by regions.
+- Flagstat is TSV. All BAMs are validated after writing.
 HLP
         return 0 ;;
       --) shift; break ;;
@@ -149,10 +403,12 @@ HLP
 
   require_nonempty "${input_bam}" "--input-bam"
   require_nonempty "${aligner}" "--aligner"
+  require_nonempty "${regions_to_exclude}" "--regions-to-exclude"
   require_file "${input_bam}"
+
   _require_samtools_116
 
-  # Threads: auto-detect if not given
+  # Threads
   if [[ -z "${threads}" ]]; then
     if command -v nproc >/dev/null 2>&1; then
       threads="$(nproc)"
@@ -160,6 +416,24 @@ HLP
       threads="$(sysctl -n hw.ncpu)"
     else
       threads="8"
+    fi
+  fi
+
+  # Normalize/interpret regions; build L_ARG as an array to avoid leading-space issues
+  local -a L_ARG=()
+  if [[ "${regions_to_exclude,,}" == "none" ]]; then
+    regions_to_exclude=""
+    L_ARG=()  # no -L used
+  else
+    require_file "${regions_to_exclude}"
+    if command -v readlink >/dev/null 2>&1; then
+      local abs_rl; abs_rl="$(readlink -f "${regions_to_exclude}" 2>/dev/null || true)"
+      [[ -n "$abs_rl" ]] && regions_to_exclude="$abs_rl"
+    fi
+    L_ARG=(-L "${regions_to_exclude}")
+    # preflight: ensure -L works with this BAM
+    if ! samtools view -@ 1 -b "${input_bam}" "${L_ARG[@]}" -o /dev/null 2>/dev/null; then
+      die "Preflight failed: samtools could not use -L '${regions_to_exclude}' with ${input_bam}"
     fi
   fi
 
@@ -172,7 +446,6 @@ HLP
   fi
 
   mkdir -p "${OUTDIR_FILTER}" "${OUTDIR_BAMS}"
-
   [[ -z "${unaligned_out}" ]] && unaligned_out="${OUTDIR_BAMS}/${base}.unaligned.bam"
   [[ -z "${excluded_out}"  ]] && excluded_out="${OUTDIR_BAMS}/${base}.excluded.bam"
   [[ -z "${flagstat_out}"  ]] && flagstat_out="${OUTDIR_FILTER}/${base}.flagstat.tsv"
@@ -183,52 +456,39 @@ HLP
 
   log "prefilter aligner=${aligner} threads=${threads}"
   log "  input_bam:   ${input_bam}"
-  log "  outputs:     unaligned=${unaligned_out}  excluded=${excluded_out}"
+  log "  outputs:     unaligned=${unaligned_out} excluded=${excluded_out}"
   log "  flagstat:    ${flagstat_out}"
+  log "  regions_to_exclude: ${regions_to_exclude:-<None>}"
 
-  # Warn if regions-to-exclude not provided
-  if [[ -z "${regions_to_exclude}" ]]; then
-    warn "You did not provide a list of regions to exclude (--regions-to-exclude) for prefiltering.
-If there are viral decoy sequences in the BAM file, they will not be included in the eventual output.
-Please check the BAM header to see if viral decoy contigs were used during alignment.
-You can create a BED file containing viral decoy regions by running:
-  samtools view -H ${input_bam} | grep \"@SQ\" | grep -E -v \"chr([1-9]|1[0-9]|2[0-2]|X|Y|M|Un)\" | \
-    awk '{split(\$2,a,\":\"); split(\$3,b,\":\"); if(a[1]==\"SN\" && b[1]==\"LN\") print a[2]\"\\t0\\t\"b[2]}' > pathseq-t2t/non_human_decoys.bed
-"
-  fi
+  log "Filtering BAM..."
 
-  # Run prefilter
+  # Single-pass pipeline with tee: flagstat -> unaligned/excluded splits
   case "${aligner}" in
     dragen|DRAGEN)
       time samtools view -@ "${threads}" -b "${input_bam}" \
         | tee >(samtools flagstat --output-fmt tsv -@ "${threads}" - > "${flagstat_out}") \
         | samtools view -@ "${threads}" -bh - -f 3 \
             -U >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD -o "${unaligned_out}") \
-            -o >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD ${regions_to_exclude:+-L "$regions_to_exclude"} -o "${excluded_out}")
+            -o >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD \
+                 "${L_ARG[@]}" -o "${excluded_out}")
       ;;
     bwa|BWA)
       time samtools view -@ "${threads}" -b "${input_bam}" \
         | tee >(samtools flagstat --output-fmt tsv -@ "${threads}" - > "${flagstat_out}") \
         | samtools view -@ "${threads}" -bh - -f 3 -e '[AS]>35' \
             -U >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD -o "${unaligned_out}") \
-            -o >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD ${regions_to_exclude:+-L "$regions_to_exclude"} -o "${excluded_out}")
+            -o >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD \
+                 "${L_ARG[@]}" -o "${excluded_out}")
       ;;
     *) die "Invalid --aligner '${aligner}'. Use 'dragen' or 'bwa'." ;;
   esac
 
-  # Validate outputs
+  log "Done."
+
+  # Post-write validations (helper sleeps 1s before quickcheck)
+  bam_check_or_die "${unaligned_out}" "prefilter: unaligned_out"
+  bam_check_or_die "${excluded_out}"  "prefilter: excluded_out"
   [[ -s "${flagstat_out}" ]] || die "Flagstat TSV is empty: ${flagstat_out}"
-  for f in "${unaligned_out}" "${excluded_out}"; do
-    if [[ -f "$f" ]]; then
-      if samtools quickcheck "$f"; then
-        log "Output BAM passed quickcheck: $f"
-      else
-        die "Output BAM failed quickcheck and may be corrupted/truncated: $f"
-      fi
-    else
-      die "Expected output BAM missing: $f"
-    fi
-  done
 
   log "prefilter done → unaligned: ${unaligned_out}, excluded: ${excluded_out}, flagstat: ${flagstat_out}"
 }
@@ -261,7 +521,7 @@ cmd_qcfilter() {
       --min-clipped-read-length) min_clipped_read_length="${2:-}"; shift 2 ;;
       --sample-id)           sample_id="${2:-}";       shift 2 ;;
       --dont-overwrite)      dont_overwrite=1;         shift ;;
-      --keep-intermediate)    keep_intermediate=1;     shift ;;
+      --keep-intermediate)   keep_intermediate=1;      shift ;;
       --psfilterspark-args)  psfilterspark_args="${2:-}"; shift 2 ;;
       --picard-jar)          PICARD_JAR="${2:-}";      shift 2 ;;
       -h|--help)
@@ -285,8 +545,10 @@ Notes:
 - Outputs are written under $OUTDIR/{filter_stats,bams}.
 - By default, PathSeqFilterSpark is re-run each time. Use --dont-overwrite
   to skip a step only if all expected outputs already exist.
-- After successful completion, intermediate BAMs are deleted by default.
-  Use --keep-intermediate to preserve them.
+- Validations:
+    * Inputs: bam_check_or_die
+    * PathSeq outputs (excluded & unaligned): pathseq_check_or_die (.sbi + quickcheck -u)
+    * Merged outputs: bam_check_or_die
 - Requires: samtools >=1.16, GATK >=4, Java 17.
 HLP
         return 0 ;;
@@ -297,20 +559,16 @@ HLP
   done
 
   # ---------- Validation & tool version checks ----------
+  require_nonempty "${input_unaligned}" "--input-unaligned"
+  require_nonempty "${input_excluded}" "--input-excluded"
   require_file "${input_unaligned}"
   require_file "${input_excluded}"
 
   _require_samtools_116
-
-  # GATK >=4 (robust parse)
-  local gatk_ver_raw gatk_ver
-  gatk_ver_raw=$(gatk --version 2>/dev/null || true)
-  gatk_ver=$(printf '%s' "$gatk_ver_raw" | _parse_first_version)
-  [[ -n "${gatk_ver:-}" ]] || die "Could not determine GATK version. Ensure 'gatk' is on PATH."
-  _semver_ge "4.0.0" "$gatk_ver" || die "GATK >=4 required (found ${gatk_ver})."
-
-  # Java 17
   _require_java17
+  _require_gatk4
+  _require_picard
+  _require_hostdir
 
   # Threads auto-detect
   if [[ -z "${threads}" ]]; then
@@ -323,17 +581,13 @@ HLP
     fi
   fi
 
-  [[ -n "${HOSTDIR_OPT}" ]] || die "--hostdir not provided and \$HOSTDIR is empty; set one (contains pathseq_host.bfi & pathseq_host.fa.img)."
-  require_file "${HOSTDIR_OPT}/pathseq_host.bfi"
-  require_file "${HOSTDIR_OPT}/pathseq_host.fa.img"
-
   mkdir -p "${OUTDIR_FILTER}" "${OUTDIR_BAMS}"
 
   # ---------- Basenames & outputs ----------
   local base_unaligned base_excluded base_merge
   base_unaligned="$(basename "${input_unaligned%.bam}")"
   base_excluded="$(basename "${input_excluded%.bam}")"
-  base_merge="${sample_id:-$base_unaligned}"
+  base_merge="${sample_id:-${base_unaligned%.unaligned}}"
 
   local filter_metrics_excluded="${OUTDIR_FILTER}/${base_excluded}.excluded.filter_metrics.txt"
   local filter_metrics="${OUTDIR_FILTER}/${base_unaligned}.unaligned.filter_metrics.txt"
@@ -370,22 +624,16 @@ HLP
   }
   trap on_exit_qcfilter EXIT
 
-  # ---------- Pre-flight: check BAM health ----------
-  if samtools quickcheck "${input_unaligned}"; then
-    log "${input_unaligned} passes quickcheck."
-  else
-    err "${input_unaligned} is truncated. Removing (and removing excluded bam as well)."
-    rm -f "${input_unaligned}" || true
-    rm -f "${bam_input_excluded}" || true
-    return 0
-  fi
+  # ---------- Pre-flight: validate input BAMs ----------
+  bam_check_or_die "${input_unaligned}" "qcfilter: input_unaligned"
+  bam_check_or_die "${input_excluded}"  "qcfilter: input_excluded"
 
-  # ---------- STEP 1A. PathSeq on excluded ----------
+  # ---------- STEP 1A. PathSeq on EXCLUDED ----------
   if [[ ${dont_overwrite} -eq 1 && -f "${filter_metrics_excluded}" && -f "${bam_paired_excluded}" && -f "${bam_unpaired_excluded}" ]]; then
-    log "STEP 1A (--dont-overwrite): outputs exist, skipping excluded PathSeqFilterSpark."
+    log "STEP 1A (--dont-overwrite): outputs exist, skipping excluded QC-filtering."
   else
     if [[ -f "${bam_input_excluded}" ]]; then
-      log "[ Reverting excluded bam ]"
+      log "Reverting excluded bam"
       if [[ -n "${PICARD_JAR}" ]]; then
         java -jar "${PICARD_JAR}" RevertSam \
           --INPUT "${bam_input_excluded}" \
@@ -403,7 +651,7 @@ HLP
       fi
       [[ -f "${bam_input_excluded_rvt}" ]] || die "RevertSam failed for excluded BAM."
 
-      log "[ Running PathSeqFilterSpark on excluded bam ]"
+      log "Running QC-filtering on excluded reads"
       time gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark \
         --input "${bam_input_excluded_rvt}" \
         --tmp-dir "${TMPDIR_OPT}" \
@@ -419,12 +667,20 @@ HLP
         ${psfilterspark_args}
 
       [[ -f "${filter_metrics_excluded}" ]] || die "Excluded PathSeqFilterSpark failed (no metrics)."
+
+      # Validate PathSeq outputs ONLY if their .sbi exists (i.e., tool wrote them)
+      if [[ -f "${bam_paired_excluded}.sbi" ]]; then
+        qcfilt_bam_check_or_die "${bam_paired_excluded}" "qcfilter: excluded paired"
+      fi
+      if [[ -f "${bam_unpaired_excluded}.sbi" ]]; then
+        qcfilt_bam_check_or_die "${bam_unpaired_excluded}" "qcfilter: excluded unpaired"
+      fi
     else
       log "No excluded BAM provided; skipping STEP 1A."
     fi
   fi
 
-  # ---------- STEP 1B. PathSeq on unaligned ----------
+  # ---------- STEP 1B. PathSeq on UNALIGNED ----------
   for d in "${PART_PAIRED_DIR}" "${PART_UNPAIRED_DIR}"; do
     if [[ -d "$d" ]]; then
       log "Removing stale Spark parts from previous run: $d"
@@ -432,10 +688,10 @@ HLP
     fi
   done
 
-  if [[ ${dont_overwrite} -eq 1 && -f "${bam_paired_filt}" && -f "${bam_paired_filt}.sbi" && -f "${bam_unpaired_filt}" && -f "${bam_unpaired_filt}.sbi" ]]; then
-    log "STEP 1B (--dont-overwrite): outputs exist, skipping unaligned PathSeqFilterSpark."
+  if [[ ${dont_overwrite} -eq 1 && -f "${bam_paired_filt}" && -f "${bam_unpaired_filt}" ]]; then
+    log "STEP 1B (--dont-overwrite): outputs exist, skipping unaligned QC-filtering."
   else
-    log "[ Running PathSeqFilterSpark on unaligned reads ]"
+    log "Running QC-filtering on unaligned reads"
     time gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark \
       --input "${input_unaligned}" \
       --tmp-dir "${TMPDIR_OPT}" \
@@ -449,17 +705,21 @@ HLP
       --unpaired-output "${bam_unpaired_filt}" \
       ${psfilterspark_args}
 
-    if [[ -f "${bam_paired_filt}" && -f "${bam_paired_filt}.sbi" && -f "${bam_unpaired_filt}" && -f "${bam_unpaired_filt}.sbi" ]]; then
-      log "Unaligned PathSeqFilterSpark done."
-    elif [[ -f "${filter_metrics}" ]]; then
-      die "Filter metrics exist, but required BAM/SBI outputs are missing."
+    if [[ -f "${bam_paired_filt}.sbi" ]]; then
+      ubam_check_or_die "${bam_paired_filt}"   "qcfilter: unaligned paired"
     else
-      die "Unaligned PathSeqFilterSpark failed."
+      die "Expected qcfilter output missing .sbi: ${bam_paired_filt}.sbi"
+    fi
+
+    if [[ -f "${bam_unpaired_filt}.sbi" ]]; then
+      ubam_check_or_die "${bam_unpaired_filt}" "qcfilter: unaligned unpaired"
+    else
+      die "Expected qcfilter output missing .sbi: ${bam_unpaired_filt}.sbi"
     fi
   fi
 
-  # ---------- STEP 1C. Merge excluded + unaligned ----------
-  log "[ Merging excluded + unaligned PathSeq outputs ]"
+  # ---------- STEP 1C. Merge EXCLUDED + UNALIGNED ----------
+  log "Merging excluded + unaligned outputs"
   if [[ -f "${bam_paired_excluded}" && -f "${bam_paired_filt}" ]]; then
     samtools merge -@ "${threads}" "${bam_paired_merge}" "${bam_paired_filt}" "${bam_paired_excluded}"
   elif [[ ! -f "${bam_paired_excluded}" && -f "${filter_metrics_excluded}" && -f "${bam_paired_filt}" ]]; then
@@ -476,17 +736,21 @@ HLP
     err "Unpaired merge: inputs incomplete (unpaired_filt=${bam_unpaired_filt}; unpaired_excluded=${bam_unpaired_excluded})"
   fi
 
-  [[ -f "${bam_paired_merge}" && -f "${bam_unpaired_merge}" ]] || die "Merging failed (paired_out='${bam_paired_merge}', unpaired_out='${bam_unpaired_merge}')."
+  # Validate merged outputs (merged BAMs won’t have .sbi; use generic check)
+  ubam_check_or_die "${bam_paired_merge}"   "qcfilter: merged paired"
+  ubam_check_or_die "${bam_unpaired_merge}" "qcfilter: merged unpaired"
 
   # ---------- Post-success cleanup ----------
   if [[ ${keep_intermediate} -eq 0 ]]; then
     log "Removing intermediate outputs (use --keep-intermediate to retain):"
     for f in \
       "${bam_input_excluded_rvt}" \
-      "${bam_paired_excluded}" "${bam_paired_excluded}.sbi" \
-      "${bam_unpaired_excluded}" "${bam_unpaired_excluded}.sbi" \
-      "${bam_paired_filt}" "${bam_paired_filt}.sbi" \
-      "${bam_unpaired_filt}" "${bam_unpaired_filt}.sbi"
+      "${bam_paired_excluded}" \
+      "${bam_unpaired_excluded}" \
+      "${bam_paired_filt}" \
+      "${bam_paired_filt}.sbi" \
+      "${bam_unpaired_filt}" \
+      "${bam_unpaired_filt}.sbi"
     do
       [[ -e "$f" ]] && rm -f "$f"
     done
@@ -522,7 +786,7 @@ cmd_t2tfilter() {
 Usage: pathseq-t2t t2tfilter \
   --input-paired <bam> \
   --input-unpaired <bam> \
-  --reference <t2t.fa> \
+  [--reference <t2t.fa> | env $T2TREF] \
   [--output-paired <bam>] [--output-unpaired <bam>] \
   [--threads <int, default: auto-detect>] \
   [--sample-id <string>] \
@@ -533,6 +797,7 @@ Notes:
 - Expects merged PathSeq outputs from qcfilter:
     <something>.qcfilt_paired.bam      (paired)
     <something>.qcfilt_unpaired.bam    (unpaired)
+- --reference is optional if $T2TREF is set.
 - Picard options use long-form syntax (--INPUT/--OUTPUT/etc.).
 - FASTQ intermediates use separate basenames per input BAM.
 - Final outputs:
@@ -548,25 +813,33 @@ HLP
     esac
   done
 
-  # --- Validation: required files
+  # --- Required inputs ---
+  require_nonempty "${input_paired}"  "--input-paired"
+  require_nonempty "${input_unpaired}" "--input-unpaired"
   require_file "${input_paired}"
   require_file "${input_unpaired}"
-  require_file "${reference}"
 
   # --- Version / tool checks ---
   _require_samtools_116
   _require_java17
-  command -v bwa >/dev/null 2>&1 || die "bwa not found on PATH."
-  if [[ -z "${PICARD_JAR}" ]]; then
-    command -v picard >/dev/null 2>&1 || die "picard not found on PATH (or provide --picard-jar)."
-  fi
+  _require_picard
+  _require_bwa
+  _require_t2tref
 
-  # --- Input BAM quickchecks
-  for f in "${input_paired}" "${input_unpaired}"; do
-    if ! samtools quickcheck "${f}"; then
-      die "Input BAM failed quickcheck (may be truncated/corrupted): ${f}"
+    # --- Reference handling ---
+  if [[ -z "${reference}" ]]; then
+    if [[ -n "${T2TREF:-}" ]]; then
+      reference="${T2TREF}"
+      log "Using reference from T2TREF: ${reference}"
+    else
+      die "No reference provided. Use --reference <t2t.fa> or set T2TREF environment variable."
     fi
-  done
+  fi
+  require_file "${reference}"
+
+  # --- Validate input BAMs (helper sleeps 1s & fully reads) ---
+  ubam_check_or_die "${input_paired}"   "t2tfilter: input_paired"
+  ubam_check_or_die "${input_unpaired}" "t2tfilter: input_unpaired"
 
   # Threads autodetect
   if [[ -z "${threads}" ]]; then
@@ -588,8 +861,8 @@ HLP
   out_base="${sample_id:-$base_paired}"
 
   # --- Outputs ---
-  [[ -z "${output_paired}"   ]] && output_paired="${OUTDIR_BAMS}/${out_base}.t2tfilt_paired.bam"
-  [[ -z "${output_unpaired}" ]] && output_unpaired="${OUTDIR_BAMS}/${out_base}.t2tfilt_unpaired.bam"
+  [[ -z "${output_paired}"   ]] && output_paired="${OUTDIR_BAMS}/${base_paired}.t2tfilt.bam"
+  [[ -z "${output_unpaired}" ]] && output_unpaired="${OUTDIR_BAMS}/${base_unpaired}.t2tfilt.bam"
   ensure_parent_dir "${output_paired}"
   ensure_parent_dir "${output_unpaired}"
 
@@ -598,13 +871,13 @@ HLP
   local fastq_r2="${OUTDIR_BAMS}/${base_paired}.R2.fq.gz"
   local fastq_u="${OUTDIR_BAMS}/${base_unpaired}.U.fq.gz"
 
-  local bam_aligned_paired="${OUTDIR_BAMS}/${base_paired}.t2t.aligned.paired.bam"
-  local bam_aligned_unpaired="${OUTDIR_BAMS}/${base_unpaired}.t2t.aligned.unpaired.bam"
+  local bam_aligned_paired="${OUTDIR_BAMS}/${base_paired}.t2t_aln.bam"
+  local bam_aligned_unpaired="${OUTDIR_BAMS}/${base_unpaired}.t2t_aln.bam"
 
-  local flagstat_aligned_paired="${OUTDIR_FILTER}/${base_paired}.t2t.aligned.paired.flagstat.tsv"
-  local flagstat_unaligned_paired="${OUTDIR_FILTER}/${base_paired}.t2t.unaligned.paired.flagstat.tsv"
-  local flagstat_aligned_unpaired="${OUTDIR_FILTER}/${base_unpaired}.t2t.aligned.unpaired.flagstat.tsv"
-  local flagstat_unaligned_unpaired="${OUTDIR_FILTER}/${base_unpaired}.t2t.unaligned.unpaired.flagstat.tsv"
+  local flagstat_aligned_paired="${OUTDIR_FILTER}/${base_paired}.t2t_aln.flagstat.tsv"
+  local flagstat_unaligned_paired="${OUTDIR_FILTER}/${base_paired}.t2t_unaln.flagstat.tsv"
+  local flagstat_aligned_unpaired="${OUTDIR_FILTER}/${base_unpaired}.t2t_aln.flagstat.tsv"
+  local flagstat_unaligned_unpaired="${OUTDIR_FILTER}/${base_unpaired}.t2t_unaln.flagstat.tsv"
 
   # Skip whole step only if --dont-overwrite and final outputs exist
   if [[ ${dont_overwrite} -eq 1 && -f "${output_paired}" && -f "${output_unpaired}" ]]; then
@@ -613,11 +886,10 @@ HLP
   fi
 
   log "t2tfilter threads=${threads} sample=${out_base}"
-  log "reference: ${reference}"
 
-  # --- Convert PathSeq BAMs -> FASTQ (paired) ---
+  # --- Convert QC-filtered BAMs -> FASTQ (paired) ---
   if [[ ! -f "${fastq_r1}" || ! -f "${fastq_r2}" ]]; then
-    log "[ Converting paired PathSeq BAM to FASTQ ]"
+    log "Converting paired QC-filtered BAM to FASTQ"
     if [[ -n "${PICARD_JAR}" ]]; then
       java -jar "${PICARD_JAR}" SamToFastq \
         --INPUT "${input_paired}" \
@@ -633,7 +905,7 @@ HLP
 
   # --- Convert PathSeq BAM -> FASTQ (unpaired) ---
   if [[ ! -f "${fastq_u}" ]]; then
-    log "[ Converting unpaired PathSeq BAM to FASTQ ]"
+    log "Converting unpaired QC-filtered BAM to FASTQ"
     if [[ -n "${PICARD_JAR}" ]]; then
       java -jar "${PICARD_JAR}" SamToFastq \
         --INPUT "${input_unpaired}" \
@@ -647,7 +919,7 @@ HLP
 
   # --- Align paired to T2T ---
   if [[ ! -f "${bam_aligned_paired}" || ${dont_overwrite} -eq 0 ]]; then
-    log "[ Aligning paired reads to T2T ]"
+    log "Aligning paired reads to T2T"
     bwa mem -t "${threads}" -T 0 "${reference}" "${fastq_r1}" "${fastq_r2}" \
       | samtools view -Shb -o "${bam_aligned_paired}"
     [[ -f "${bam_aligned_paired}" ]] || die "Failed to create aligned paired BAM."
@@ -679,22 +951,9 @@ HLP
     samtools flagstat --output-fmt tsv "${output_unpaired}" > "${flagstat_unaligned_unpaired}" || true
   fi
 
-  # --- Post-run integrity checks ---
-  local failed=0
-  for f in "${output_paired}" "${output_unpaired}"; do
-    if [[ -f "$f" ]]; then
-      if samtools quickcheck "$f"; then
-        log "Output BAM passed quickcheck: $f"
-      else
-        err "Output BAM failed quickcheck and may be corrupted/truncated: $f"
-        failed=1
-      fi
-    else
-      err "Expected output BAM missing: $f"
-      failed=1
-    fi
-  done
-  [[ $failed -eq 0 ]] || die "t2tfilter integrity check failed."
+  # --- Post-run integrity checks (sleep + full read via helper) ---
+  bam_check_or_die "${output_paired}"   "t2tfilter: final paired"
+  bam_check_or_die "${output_unpaired}" "t2tfilter: final unpaired"
 
   # --- Cleanup intermediates (unless requested to keep) ---
   if [[ ${keep_intermediate} -eq 0 ]]; then
@@ -709,6 +968,7 @@ HLP
 
   log "t2tfilter done → paired(unmapped): ${output_paired} ; unpaired(unmapped): ${output_unpaired}"
 }
+
 
 
 cmd_classify() {
@@ -775,15 +1035,12 @@ HLP
     esac
   done
 
+  require_nonempty "${input_paired}"  "--input-paired"
+  require_nonempty "${input_unpaired}" "--input-unpaired"
   require_file "${input_paired}"
   require_file "${input_unpaired}"
 
-  # --- Version/tool checks ---
-  _require_samtools_116
-  _require_java17
-  if [[ -z "${PICARD_JAR}" ]]; then
-    command -v picard >/dev/null 2>&1 || die "picard not found on PATH (or provide --picard-jar)."
-  fi
+  _require_picard
 
   # Tools for classifiers (checked only if used)
   local run_kraken=0 run_metaphlan=0
@@ -793,15 +1050,19 @@ HLP
     both|BOTH)                     run_kraken=1; run_metaphlan=1 ;;
     *) die "Invalid --classifier '${classifier}'. Use 'kraken', 'metaphlan', or 'both'." ;;
   esac
-  if [[ $run_kraken -eq 1 ]]; then
-    command -v kraken2 >/dev/null 2>&1 || die "kraken2 not found on PATH."
-    [[ -n "${kraken_db}" ]] || die "--kraken-db not provided and \$KRAKEN_DB is empty."
+
+  # Conditional tool + DB checks (guard with :-0)
+  if [[ ${run_kraken:-0} -eq 1 ]]; then
+    _require_kraken2
+    _require_kraken2db "${kraken_db:-}"
   fi
-  if [[ $run_metaphlan -eq 1 ]]; then
-    command -v metaphlan >/dev/null 2>&1 || die "metaphlan not found on PATH."
-    [[ -n "${metaphlan_index}" ]] || die "--metaphlan-index not provided and \$METAPHLAN_INDEX is empty."
-    [[ -n "${bowtie2db}" ]] || die "--bowtie2db not provided and \$BOWTIE2DB is empty."
+
+  if [[ ${run_metaphlan:-0} -eq 1 ]]; then
+    _require_metaphlan4
+    _require_metaphlan4db "${metaphlan_index:-}" "${bowtie2db:-}"
   fi
+
+
 
   # Auto threads
   if [[ -z "${threads}" ]]; then
@@ -828,9 +1089,7 @@ HLP
 
   # Validate inputs with quickcheck (no deletion on failure)
   for f in "${input_paired}" "${input_unpaired}"; do
-    if ! samtools quickcheck "${f}"; then
-      die "Input BAM failed quickcheck and may be truncated/corrupted: ${f}"
-    fi
+    ubam_check_or_die $f
   done
 
   # Prepare FASTQ intermediates (paired + unpaired, separate basenames)
@@ -842,7 +1101,7 @@ HLP
 
   # Convert BAMs -> FASTQ (paired)
   if [[ ! -f "${fastq_r1}" || ! -f "${fastq_r2}" || ${dont_overwrite} -eq 0 ]]; then
-    log "[ Converting unmapped paired BAM to FASTQs ]"
+    log "Converting unmapped paired BAM to FASTQs"
     if [[ -n "${PICARD_JAR}" ]]; then
       time java -jar "${PICARD_JAR}" SamToFastq \
         --INPUT "${input_paired}" \
@@ -861,7 +1120,7 @@ HLP
 
   # Convert BAM -> FASTQ (unpaired)
   if [[ ! -f "${fastq_unp}" || ${dont_overwrite} -eq 0 ]]; then
-    log "[ Converting unmapped unpaired BAM to FASTQ ]"
+    log "Converting unmapped unpaired BAM to FASTQ"
     if [[ -n "${PICARD_JAR}" ]]; then
       time java -jar "${PICARD_JAR}" SamToFastq \
         --INPUT "${input_unpaired}" \
