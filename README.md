@@ -35,6 +35,23 @@ A host subtraction, quality control, and classification  pipeline for identifyin
   Official repository of MetaPhlAn indexes:  
   <http://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/>
 
+
+---
+
+## Installation
+
+### Option 1: Clone and run directly
+Clone this repository and add the CLI to your `PATH`:
+
+`git clone https://github.com/<your-org>/pathseq-t2t.git
+cd pathseq-t2t
+chmod +x src/pathseq-t2t
+export PATH=$PWD/src:$PATH
+pathseq-t2t --help`
+
+### Option 2: Conda (coming soon)
+
+
 ---
 
 ## Description
