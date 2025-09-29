@@ -78,10 +78,10 @@ PathSeq-T2T is broken into four steps, given by four commands:
 
 ## Step 1. Prefilter
 
-pathseq-t2t prefilter \
+`pathseq-t2t prefilter \
   --input-bam sample.bam \
   --regions-to-exclude decoys.bed \
-  --aligner bwa
+  --aligner bwa`
 
 **Options**
 * `--aligner bwa|dragen    (required; no default)`
