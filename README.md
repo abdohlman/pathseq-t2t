@@ -50,29 +50,29 @@ PathSeq-T2T is broken into four steps, given by four commands:
 
 ## Usage examples
 
-# Step 1. Prefilter
-pathseq-t2t prefilter --input-bam sample.bam --regions-to-exclude decoys.bed --aligner bwa
+### Step 1. Prefilter
+`pathseq-t2t prefilter --input-bam sample.bam --regions-to-exclude decoys.bed --aligner bwa`
 
-# Step 2. QC filter
-pathseq-t2t qcfilter \
+### Step 2. QC filter
+`pathseq-t2t qcfilter \
   --input-unaligned pst2t_output/bams/sample.prefilter.unaligned.bam \
   --input-excluded pst2t_output/bams/sample.prefilter.excluded.bam \
-  --hostdir /refs/pathseq_host
+  --hostdir /refs/pathseq_host`
 
-# Step 3. T2T filter
-pathseq-t2t t2tfilter \
+### Step 3. T2T filter
+`pathseq-t2t t2tfilter \
   --input-paired pst2t_output/bams/sample.qcfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.qcfilt_unpaired.bam \
-  --reference /refs/t2t.fa
+  --reference /refs/t2t.fa`
 
-# Step 4. Classification
-pathseq-t2t classify \
+### Step 4. Classification
+`pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
   --kraken-db /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2
+  --bowtie2db /db/bowtie2`
 
 ---
 
@@ -84,95 +84,95 @@ pathseq-t2t prefilter \
   --aligner bwa
 
 **Options**
---aligner bwa|dragen    (required; no default)  
---regions-to-exclude    <bed> (required; use `None` to disable)  
---threads               <int> (auto-detected if omitted)  
---sample-id             <string> (default: basename of input)  
+* `--aligner bwa|dragen    (required; no default)`
+* `--regions-to-exclude    <bed> (required; use `None` to disable)`
+* `--threads               <int> (auto-detected if omitted)`
+* `--sample-id            <string> (default: basename of input)`  
 
 **Outputs**
-<sample>.prefilter.unaligned.bam  
-<sample>.prefilter.excluded.bam  
-<sample>.input.flagstat.tsv  
+* `<sample>.prefilter.unaligned.bam ` 
+* `<sample>.prefilter.excluded.bam  `
+* `<sample>.input.flagstat.tsv ` 
 
 ---
 
 ## Step 2. QC filter
 
-pathseq-t2t qcfilter \
+`pathseq-t2t qcfilter \
   --input-unaligned pst2t_output/bams/sample.prefilter.unaligned.bam \
   --input-excluded pst2t_output/bams/sample.prefilter.excluded.bam \
-  --hostdir /refs/pathseq_host
+  --hostdir /refs/pathseq_host`
 
 **Options**
---sample-id              <string> (default: basename of input)  
---ram-gb                 <int> (default: 16)  
---threads                <int> (auto-detected)  
---min-clipped-read-length<int> (default: 60)  
---dont-overwrite         Skip step if outputs already exist  
---keep-intermediate      Retain intermediate files  
---psfilterspark-args     "<extra args>" to pass to GATK PathSeqFilterSpark  
---picard-jar             </path/picard.jar>  
+* `--sample-id              <string> (default: basename of input)  `
+* `--ram-gb                 <int> (default: 16)  `
+* `--threads                <int> (auto-detected)  `
+* `--min-clipped-read-length<int> (default: 60)  `
+* `--dont-overwrite         Skip step if outputs already exist  `
+* `--keep-intermediate      Retain intermediate files  `
+* `--psfilterspark-args     "<extra args>" to pass to GATK PathSeqFilterSpark  `
+* `--picard-jar             </path/picard.jar>  `
 
 **Outputs**
-<sample>.qcfilt_paired.bam  
-<sample>.qcfilt_unpaired.bam  
-<sample>.excluded.filter_metrics.txt  
-<sample>.unaligned.filter_metrics.txt  
+* `<sample>.qcfilt_paired.bam  `
+* `<sample>.qcfilt_unpaired.bam  `
+* `<sample>.excluded.filter_metrics.txt  `
+* `<sample>.unaligned.filter_metrics.txt  `
 
 ---
 
 ## Step 3. T2T filter
 
-pathseq-t2t t2tfilter \
+`pathseq-t2t t2tfilter \
   --input-paired pst2t_output/bams/sample.qcfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.qcfilt_unpaired.bam \
-  --reference /refs/t2t.fa
+  --reference /refs/t2t.fa`
 
 **Options**
---sample-id          <string> (default: basename of input)  
---threads            <int> (auto-detected)  
---dont-overwrite     Skip step if outputs already exist  
---keep-intermediate  Retain intermediate files  
---picard-jar         </path/picard.jar>  
+* `--sample-id          <string> (default: basename of input)  `
+* `--threads            <int> (auto-detected)  `
+* `--dont-overwrite     Skip step if outputs already exist  `
+* `--keep-intermediate  Retain intermediate files  `
+* `--picard-jar         </path/picard.jar>  `
 
 **Outputs**
-<sample>.t2tfilt_paired.bam  
-<sample>.t2tfilt_unpaired.bam  
-<sample>.t2t.aligned.paired.flagstat.tsv  
-<sample>.t2t.unaligned.paired.flagstat.tsv  
-<sample>.t2t.aligned.unpaired.flagstat.tsv  
-<sample>.t2t.unaligned.unpaired.flagstat.tsv  
+* `<sample>.t2tfilt_paired.bam  `
+* `<sample>.t2tfilt_unpaired.bam  `
+* `<sample>.t2t.aligned.paired.flagstat.tsv  `
+* `<sample>.t2t.unaligned.paired.flagstat.tsv  `
+* `<sample>.t2t.aligned.unpaired.flagstat.tsv  `
+* `<sample>.t2t.unaligned.unpaired.flagstat.tsv  `
 
 ---
 
 ## Step 4. Classification
 
-pathseq-t2t classify \
+`pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
   --kraken-db /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2
+  --bowtie2db /db/bowtie2`
 
 **Options**
---classifier       kraken|metaphlan|both (default: kraken)  
---sample-id        <string> (default: basename of input)  
---threads          <int> (auto-detected)  
---dont-overwrite   Skip step if outputs already exist  
---keep-intermediate Retain intermediate files  
---kraken-db        <dir> or $KRAKEN_DB  
---metaphlan-index  <name> or $METAPHLAN_INDEX  
---bowtie2db        <dir> or $BOWTIE2DB  
---kraken-args      "<extra args>" for Kraken2  
---metaphlan-args   "<extra args>" for MetaPhlAn4  
+* `--classifier       kraken|metaphlan|both (default: kraken)  `
+* `--sample-id        <string> (default: basename of input)  `
+* `--threads          <int> (auto-detected)  `
+* `--dont-overwrite   Skip step if outputs already exist  `
+* `--keep-intermediate Retain intermediate files  `
+* `--kraken-db        <dir> or $KRAKEN_DB  `
+* `--metaphlan-index  <name> or $METAPHLAN_INDEX  `
+* `--bowtie2db        <dir> or $BOWTIE2DB  `
+* `--kraken-args      "<extra args>" for Kraken2  `
+* `--metaphlan-args   "<extra args>" for MetaPhlAn4  `
 
 **Kraken2 outputs**
-<sample>.kraken.paired.txt  
-<sample>.kraken.paired.report  
-<sample>.kraken.unpaired.txt  
-<sample>.kraken.unpaired.report  
+* `<sample>.kraken.paired.txt  `
+* `<sample>.kraken.paired.report  `
+* `<sample>.kraken.unpaired.txt  `
+* `<sample>.kraken.unpaired.report  `
 
 **MetaPhlAn4 outputs**
-<sample>.metaphlan.txt  
-<sample>.metaphlan.bowtie2.bz2  
+* `<sample>.metaphlan.txt  `
+* `<sample>.metaphlan.bowtie2.bz2  `
