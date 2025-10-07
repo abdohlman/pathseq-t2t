@@ -73,34 +73,45 @@ PathSeq-T2T is broken into four steps, given by four commands:
 `pathseq-t2t prefilter --input-bam sample.bam --regions-to-exclude decoys.bed --aligner bwa`
 
 ### Step 2. QC filter
-`pathseq-t2t qcfilter \
+
+```
+pathseq-t2t qcfilter \
   --input-unaligned pst2t_output/bams/sample.prefilter.unaligned.bam \
   --input-excluded pst2t_output/bams/sample.prefilter.excluded.bam \
-  --hostdir /refs/pathseq_host`
+  --hostdir /refs/pathseq_host
+```
 
 ### Step 3. T2T filter
-`pathseq-t2t t2tfilter \
+```
+pathseq-t2t t2tfilter \
   --input-paired pst2t_output/bams/sample.qcfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.qcfilt_unpaired.bam \
-  --reference /refs/t2t.fa`
+  --reference /refs/t2t.fa
+```
 
 ### Step 4. Classification
-`pathseq-t2t classify \
+```
+pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
   --kraken-db /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2`
+  --bowtie2db /db/bowtie2
+```
 
 ---
 
 ## Step 1. Prefilter
 
-`pathseq-t2t prefilter \
+This step selects reads not aligned in the input BAM file. Typically your BAM will be aligned to hg38 when it is delivered to you. Please check the exact aligner was used (e.g. BWA versus DRAGEN) and which alignment parameters were used, because this will affect behavior.
+
+```
+pathseq-t2t prefilter \
   --input-bam sample.bam \
   --regions-to-exclude decoys.bed \
-  --aligner bwa`
+  --aligner bwa
+```
 
 **Options**
 * `--aligner bwa|dragen    (required; no default)`
@@ -117,10 +128,14 @@ PathSeq-T2T is broken into four steps, given by four commands:
 
 ## Step 2. QC filter
 
-`pathseq-t2t qcfilter \
+This step performs quality/complexity filtering & masking, then screens reads for matching host k-mers.
+
+```
+pathseq-t2t qcfilter \
   --input-unaligned pst2t_output/bams/sample.prefilter.unaligned.bam \
   --input-excluded pst2t_output/bams/sample.prefilter.excluded.bam \
-  --hostdir /refs/pathseq_host`
+  --hostdir /refs/pathseq_host
+```
 
 **Options**
 * `--sample-id              <string> (default: basename of input)  `
@@ -142,10 +157,14 @@ PathSeq-T2T is broken into four steps, given by four commands:
 
 ## Step 3. T2T filter
 
-`pathseq-t2t t2tfilter \
+This step performs subtractive alignment to T2T-CHM13.
+
+```
+pathseq-t2t t2tfilter \
   --input-paired pst2t_output/bams/sample.qcfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.qcfilt_unpaired.bam \
-  --reference /refs/t2t.fa`
+  --reference /refs/t2t.fa
+```
 
 **Options**
 * `--sample-id          <string> (default: basename of input)  `
@@ -166,13 +185,17 @@ PathSeq-T2T is broken into four steps, given by four commands:
 
 ## Step 4. Classification
 
-`pathseq-t2t classify \
+This step classifies filtered, putatively non-human sequencing reads with Kraken2 and MetaPhlAn4.
+
+```
+pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
   --kraken-db /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2`
+  --bowtie2db /db/bowtie2
+```
 
 **Options**
 * `--classifier       kraken|metaphlan|both (default: kraken)  `
