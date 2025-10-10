@@ -9,7 +9,7 @@ A host subtraction, quality control, and classification  pipeline for identifyin
 - `gatk >=4`
 - `java 17`
 - `picard`
-- `bwa` (must support `bwa mem`)
+- `bwa`
 - `kraken2`
 - `metaphlan4`
 - `bowtie2`
@@ -18,21 +18,21 @@ A host subtraction, quality control, and classification  pipeline for identifyin
 
 ## Required databases
 
-* **PathSeq host k-mer database**  
-  Must contain both `pathseq_host.bfi` and `pathseq_host.fa.img`.  
+* **PathSeq host k-mer database**  (~15G)
+  Must contain both `pathseq_host.bfi` (8.6G) and `pathseq_host.fa.img` (6.6G).
   Available from GATK Best Practices:  
   <https://console.cloud.google.com/storage/browser/gatk-best-practices/pathseq/resources>
 
-* **T2T-CHM13 reference genome**  
+* **T2T-CHM13 reference genome**  (~1G)
   NCBI FTP:  
   <https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna.gz>
 
-* **Kraken2 database**  
-  Several prebuilt versions available (standard, plusPF, etc.):  
+* **Kraken2 database**
+  Several prebuilt versions available, but we recommend PlusPF (~100G), available here:  
   <https://benlangmead.github.io/aws-indexes/k2>
 
-* **MetaPhlAn4 database**  
-  Official repository of MetaPhlAn indexes:  
+* **MetaPhlAn4 databases **  
+  Requires the CHOCOPhlAn SGB database (~3G) and bowtie2 index (~20G), available here: 
   <http://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/>
 
 
