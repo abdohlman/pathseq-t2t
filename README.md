@@ -202,7 +202,7 @@ pathseq-t2t classify \
 * `--threads          <int> (auto-detected)  `
 * `--dont-overwrite   Skip step if outputs already exist  `
 * `--keep-intermediate Retain intermediate files  `
-* `--kraken-db        <dir> or $KRAKEN_DB  `
+* `--kraken-db        <dir> or $KRAKEN_INDEX  `
 * `--metaphlan-index  <name> or $METAPHLAN_INDEX  `
 * `--bowtie2db        <dir> or $BOWTIE2DB  `
 * `--kraken-args      "<extra args>" for Kraken2  `
