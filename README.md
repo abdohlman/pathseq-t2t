@@ -94,9 +94,9 @@ pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
-  --kraken-db /db/kraken \
+  --kraken-index /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2
+  --bowtie2-index /db/bowtie2
 ```
 
 ---
@@ -191,9 +191,9 @@ pathseq-t2t classify \
   --input-paired pst2t_output/bams/sample.t2tfilt_paired.bam \
   --input-unpaired pst2t_output/bams/sample.t2tfilt_unpaired.bam \
   --classifier both \
-  --kraken-db /db/kraken \
+  --kraken-index /db/kraken \
   --metaphlan-index mpa_vJun23_CHOCOPhlAnSGB_202403 \
-  --bowtie2db /db/bowtie2
+  --bowtie2-index /db/bowtie2
 ```
 
 **Options**
@@ -202,9 +202,9 @@ pathseq-t2t classify \
 * `--threads          <int> (auto-detected)  `
 * `--dont-overwrite   Skip step if outputs already exist  `
 * `--keep-intermediate Retain intermediate files  `
-* `--kraken-db        <dir> or $KRAKEN_INDEX  `
+* `--kraken-index        <dir> or $KRAKEN_INDEX  `
 * `--metaphlan-index  <name> or $METAPHLAN_INDEX  `
-* `--bowtie2db        <dir> or $BOWTIE2DB  `
+* `--bowtie2-index        <dir> or $bowtie2-index  `
 * `--kraken-args      "<extra args>" for Kraken2  `
 * `--metaphlan-args   "<extra args>" for MetaPhlAn4  `
 
