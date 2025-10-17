@@ -15,8 +15,9 @@ LIB_DIR="${SCRIPT_DIR%/src}/lib"
 OUTDIR="${OUTDIR:-./pst2t_output}"
 
 # Subdirs
-OUTDIR_FILTER="${OUTDIR}/filter_stats"
 OUTDIR_BAMS="${OUTDIR}/bams"
+OUTDIR_FILTER="${OUTDIR}/filter_stats"
+OUTDIR_CLASSIFY="${OUTDIR}/classification_stats"
 OUTDIR_RESULTS="${OUTDIR}/results"
 
 usage() {
@@ -72,10 +73,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Recompute subdirs after OUTDIR change
-OUTDIR_FILTER="${OUTDIR}/filter_stats"
 OUTDIR_BAMS="${OUTDIR}/bams"
+OUTDIR_FILTER="${OUTDIR}/filter_stats"
+OUTDIR_CLASSIFY="${OUTDIR}/classification_stats"
 OUTDIR_RESULTS="${OUTDIR}/results"
-mkdir -p "${OUTDIR_FILTER}" "${OUTDIR_BAMS}" "${OUTDIR_RESULTS}"
+mkdir -p "${OUTDIR_BAMS}" "${OUTDIR_FILTER}" "${OUTDIR_CLASSIFY}" "${OUTDIR_RESULTS}"
 
 cmd="${1:-}"
 [[ -z "${cmd}" ]] && { usage; exit 2; }
@@ -197,7 +199,9 @@ _require_kraken2() {
   [[ -n "$kver" ]] && log "Detected Kraken2 version: $kver"
 }
 
-# Ensure MetaPhlAn v4 executable is available and version is >= 4.0.0.
+
+
+# Ensure MetaPhlAn v4 executable is available and version >= 4
 _require_metaphlan4() {
   command -v metaphlan >/dev/null 2>&1 || die "metaphlan not found on PATH."
   local mver_line mver
@@ -207,6 +211,9 @@ _require_metaphlan4() {
   _semver_ge "4.0.0" "$mver" || die "MetaPhlAn >= 4.0.0 required (found $mver)."
   log "Detected MetaPhlAn version: $mver"
 }
+
+
+
 
 
 # Helper function to ensure the required PathSeq host directory is available
@@ -274,50 +281,50 @@ Then re-run this command."
 }
 
 
-
-# Require a Kraken2 database directory
-# Usage: _require_kraken2db /path/to/kraken2_db
-_require_kraken2db() {
-  local db="$1"
-  if [[ -z "${db}" ]]; then
-    die "No Kraken2 DB provided (--kraken2-db)."
+# Require a Kraken2 database directory (standardized: *index)
+# Usage: _require_kraken2_index /path/to/kraken2_index
+_require_kraken2_index() {
+  local idx_dir="$1"
+  if [[ -z "${idx_dir}" ]]; then
+    die "No Kraken2 index provided (--kraken-index) or export \$KRAKEN_INDEX."
   fi
-  if [[ ! -d "${db}" ]]; then
-    die "Kraken2 DB directory not found: ${db}
+  if [[ ! -d "${idx_dir}" ]]; then
+    die "Kraken2 index directory not found: ${idx_dir}
 See: https://benlangmead.github.io/aws-indexes/k2"
   fi
-
-  # Kraken2 requires these core files
+  # Kraken2 core files
   for f in hash.k2d opts.k2d taxo.k2d; do
-    [[ -f "${db}/${f}" ]] || die "Kraken2 DB incomplete: missing ${f} in ${db}
+    [[ -f "${idx_dir}/${f}" ]] || die "Kraken2 index incomplete: missing ${f} in ${idx_dir}
 See: https://benlangmead.github.io/aws-indexes/k2"
   done
-
-  log "Detected valid Kraken2 DB: ${db}"
+  log "Detected valid Kraken2 index: ${idx_dir}"
 }
+
 
 # Require a MetaPhlAn4 database (Bowtie2 index basename)
 # Usage: _require_metaphlan4db /path/to/mpa_index
-_require_metaphlan4db() {
-  local idx="$1"
-  if [[ -z "${idx}" ]]; then
-    die "No MetaPhlAn DB index provided (--metaphlan-index)."
-  fi
+_require_metaphlan4_index() {
+  local index_name="$1"
+  local bt2_dir="$2"
 
-  local base="${idx}"
+  [[ -n "${index_name}" ]] || die "No MetaPhlAn index provided (--metaphlan-index) or export \$METAPHLAN_INDEX."
+  [[ -n "${bt2_dir}"    ]] || die "No Bowtie2 index directory provided (--bowtie2-index) or export \$BOWTIE2_INDEX."
+  [[ -d "${bt2_dir}"    ]] || die "Bowtie2 index directory not found: ${bt2_dir}"
+
+  local base="${bt2_dir%/}/${index_name}"
   local missing=()
-  for ext in 1.bt2 2.bt2 3.bt2 4.bt2 rev.1.bt2 rev.2.bt2; do
+  for ext in 1.bt2l 2.bt2l 3.bt2l 4.bt2l rev.1.bt2l rev.2.bt2l; do
     [[ -f "${base}.${ext}" ]] || missing+=("${base}.${ext}")
   done
 
   if (( ${#missing[@]} > 0 )); then
-    die "MetaPhlAn DB appears incomplete at ${base}.
+    die "MetaPhlAn index appears incomplete under ${bt2_dir} for basename '${index_name}'.
 Missing files:
   ${missing[*]}
 See: http://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/"
   fi
 
-  log "Detected valid MetaPhlAn4 DB index: ${base}"
+  log "Detected valid MetaPhlAn4 index: ${base}"
 }
 
 
@@ -589,16 +596,16 @@ HLP
   base_excluded="$(basename "${input_excluded%.bam}")"
   base_merge="${sample_id:-${base_unaligned%.unaligned}}"
 
-  local filter_metrics_excluded="${OUTDIR_FILTER}/${base_excluded}.excluded.filter_metrics.txt"
-  local filter_metrics="${OUTDIR_FILTER}/${base_unaligned}.unaligned.filter_metrics.txt"
+  local filter_metrics_excluded="${OUTDIR_FILTER}/${base_excluded}.filter_metrics.txt"
+  local filter_metrics="${OUTDIR_FILTER}/${base_unaligned}.filter_metrics.txt"
 
   local bam_input_excluded="${input_excluded}"
-  local bam_input_excluded_rvt="${OUTDIR_BAMS}/${base_excluded}.excluded.rvt.bam"
-  local bam_paired_excluded="${OUTDIR_BAMS}/${base_excluded}.excluded.paired.bam"
-  local bam_unpaired_excluded="${OUTDIR_BAMS}/${base_excluded}.excluded.unpaired.bam"
+  local bam_input_excluded_rvt="${OUTDIR_BAMS}/${base_excluded}.rvt.bam"
+  local bam_paired_excluded="${OUTDIR_BAMS}/${base_excluded}.paired.bam"
+  local bam_unpaired_excluded="${OUTDIR_BAMS}/${base_excluded}.unpaired.bam"
 
-  local bam_paired_filt="${OUTDIR_BAMS}/${base_unaligned}.unaligned.paired.bam"
-  local bam_unpaired_filt="${OUTDIR_BAMS}/${base_unaligned}.unaligned.unpaired.bam"
+  local bam_paired_filt="${OUTDIR_BAMS}/${base_unaligned}.paired.bam"
+  local bam_unpaired_filt="${OUTDIR_BAMS}/${base_unaligned}.unpaired.bam"
 
   local bam_paired_merge_default="${OUTDIR_BAMS}/${base_merge}.qcfilt_paired.bam"
   local bam_unpaired_merge_default="${OUTDIR_BAMS}/${base_merge}.qcfilt_unpaired.bam"
@@ -858,6 +865,10 @@ HLP
   local base_paired base_unpaired out_base
   base_paired="$(basename "${input_paired%.bam}")"
   base_unpaired="$(basename "${input_unpaired%.bam}")"
+
+  if [[ -z "${sample_id}" ]]; then
+    sample_id="${base_paired%.qcfilt_paired}"
+  fi
   out_base="${sample_id:-$base_paired}"
 
   # --- Outputs ---
@@ -931,6 +942,7 @@ HLP
     time samtools view -@ "${threads}" -bh "${bam_aligned_paired}" -f 3 -e '[AS]>35' \
       -U >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD -o "${output_paired}") \
       -o >(samtools flagstat --output-fmt tsv - > "${flagstat_aligned_paired}")
+      sleep 1
     samtools flagstat --output-fmt tsv "${output_paired}" > "${flagstat_unaligned_paired}" || true
   fi
 
@@ -948,6 +960,7 @@ HLP
     time samtools view -@ "${threads}" -bh "${bam_aligned_unpaired}" -e '[AS]>35' \
       -U >(samtools view -@ "${threads}" -bh -F 2048 -x SA -x OQ -x MD -o "${output_unpaired}") \
       -o >(samtools flagstat --output-fmt tsv - > "${flagstat_aligned_unpaired}")
+    sleep 1
     samtools flagstat --output-fmt tsv "${output_unpaired}" > "${flagstat_unaligned_unpaired}" || true
   fi
 
@@ -967,6 +980,7 @@ HLP
   fi
 
   log "t2tfilter done → paired(unmapped): ${output_paired} ; unpaired(unmapped): ${output_unpaired}"
+
 }
 
 
@@ -981,9 +995,9 @@ cmd_classify() {
   local PICARD_JAR="${PICARD_JAR:-}"
 
   # DB/config (can come from env)
-  local kraken_db="${KRAKEN_DB:-}"
-  local metaphlan_index="${METAPHLAN_INDEX:-}"   # e.g., mpa_vJun23_CHOCOPhlAnSGB_202403
-  local bowtie2db="${BOWTIE2DB:-}"
+  local kraken_index="${KRAKEN_INDEX:-}"
+  local metaphlan_index="${METAPHLAN_INDEX:-}"      # e.g., mpa_vJun23_CHOCOPhlAnSGB_202403
+  local bowtie2_index="${BOWTIE2_INDEX:-}"          # directory containing the bowtie2 index files
 
   # Extra args passthrough
   local kraken_args=""
@@ -998,9 +1012,11 @@ cmd_classify() {
       --sample-id)          sample_id="${2:-}"; shift 2 ;;
       --dont-overwrite)     dont_overwrite=1; shift ;;
       --keep-intermediate)  keep_intermediate=1; shift ;;
-      --kraken-db)          kraken_db="${2:-}"; shift 2 ;;
+
+      # standardized flags
+      --kraken-index)       kraken_index="${2:-}"; shift 2 ;;
       --metaphlan-index)    metaphlan_index="${2:-}"; shift 2 ;;
-      --bowtie2db)          bowtie2db="${2:-}"; shift 2 ;;
+      --bowtie2-index)      bowtie2_index="${2:-}"; shift 2 ;;
       --kraken-args)        kraken_args="${2:-}"; shift 2 ;;
       --metaphlan-args)     metaphlan_args="${2:-}"; shift 2 ;;
       --picard-jar)         PICARD_JAR="${2:-}"; shift 2 ;;
@@ -1013,9 +1029,9 @@ Usage: pathseq-t2t classify \
   [--threads <int, default: auto-detect>] \
   [--sample-id <string>] \
   [--dont-overwrite] [--keep-intermediate] \
-  [--kraken-db <dir> | env $KRAKEN_DB] \
+  [--kraken-index <dir> | env $KRAKEN_INDEX] \
   [--metaphlan-index <name> | env $METAPHLAN_INDEX] \
-  [--bowtie2db <dir> | env $BOWTIE2DB] \
+  [--bowtie2-index <dir> | env $BOWTIE2_INDEX] \
   [--kraken-args "<extra args>"] \
   [--metaphlan-args "<extra args>"] \
   [--picard-jar </path/picard.jar>]
@@ -1042,7 +1058,7 @@ HLP
 
   _require_picard
 
-  # Tools for classifiers (checked only if used)
+  # Decide which classifiers to run
   local run_kraken=0 run_metaphlan=0
   case "${classifier}" in
     kraken|KRAKEN)                 run_kraken=1 ;;
@@ -1051,18 +1067,16 @@ HLP
     *) die "Invalid --classifier '${classifier}'. Use 'kraken', 'metaphlan', or 'both'." ;;
   esac
 
-  # Conditional tool + DB checks (guard with :-0)
-  if [[ ${run_kraken:-0} -eq 1 ]]; then
+  # Conditional tool + index checks
+  if [[ ${run_kraken} -eq 1 ]]; then
     _require_kraken2
-    _require_kraken2db "${kraken_db:-}"
+    _require_kraken2_index "${kraken_index:-}"
   fi
 
-  if [[ ${run_metaphlan:-0} -eq 1 ]]; then
+  if [[ ${run_metaphlan} -eq 1 ]]; then
     _require_metaphlan4
-    _require_metaphlan4db "${metaphlan_index:-}" "${bowtie2db:-}"
+    _require_metaphlan4_index "${metaphlan_index:-}" "${bowtie2_index:-}"
   fi
-
-
 
   # Auto threads
   if [[ -z "${threads}" ]]; then
@@ -1075,29 +1089,30 @@ HLP
     fi
   fi
 
-  mkdir -p "${OUTDIR_RESULTS}" "${OUTDIR_BAMS}" "${OUTDIR_FILTER}"
+  mkdir -p "${OUTDIR_RESULTS}" "${OUTDIR_BAMS}" "${OUTDIR_FILTER}" "${OUTDIR_CLASSIFY}"
 
   # Sample/base naming
   local base_paired base_unpaired out_base
   base_paired="$(basename "${input_paired%.bam}")"
   base_unpaired="$(basename "${input_unpaired%.bam}")"
-  if [[ -n "${sample_id}" ]]; then
-    out_base="${sample_id}"
-  else
-    out_base="${base_paired}"
+
+  if [[ -z "${sample_id}" ]]; then
+    sample_id="${base_paired%.qcfilt_paired.t2tfilt}"
   fi
 
-  # Validate inputs with quickcheck (no deletion on failure)
+  out_base="${sample_id:-$base_paired}"
+
+  # Validate inputs (unaligned BAMs → use -u mode)
   for f in "${input_paired}" "${input_unpaired}"; do
-    ubam_check_or_die $f
+    ubam_check_or_die "$f" "classify: input"
   done
 
-  # Prepare FASTQ intermediates (paired + unpaired, separate basenames)
+  # Prepare FASTQ intermediates
   local fastq_r1="${OUTDIR_BAMS}/${base_paired}.classify.R1.fq.gz"
   local fastq_r2="${OUTDIR_BAMS}/${base_paired}.classify.R2.fq.gz"
-  local fastq_fu="${OUTDIR_BAMS}/${base_paired}.classify.FU.fq.gz"       # unpaired reads emitted from paired BAM (if any)
+  local fastq_fu="${OUTDIR_BAMS}/${base_paired}.classify.FU.fq.gz"
   local fastq_unp="${OUTDIR_BAMS}/${base_unpaired}.classify.unpaired.fq.gz"
-  local fastq_mrg="${OUTDIR_BAMS}/${out_base}.metaphlan.merged.fq.gz"    # one name for merged file
+  local fastq_mrg="${OUTDIR_BAMS}/${out_base}.metaphlan.merged.fq.gz"
 
   # Convert BAMs -> FASTQ (paired)
   if [[ ! -f "${fastq_r1}" || ! -f "${fastq_r2}" || ${dont_overwrite} -eq 0 ]]; then
@@ -1134,11 +1149,11 @@ HLP
   fi
 
   # ---------- Run Kraken2 ----------
-  if [[ $run_kraken -eq 1 ]]; then
-    local k2_out_paired="${OUTDIR_RESULTS}/${out_base}.kraken.paired.txt"
-    local k2_rep_paired="${OUTDIR_RESULTS}/${out_base}.kraken.paired.report"
-    local k2_out_unpaired="${OUTDIR_RESULTS}/${out_base}.kraken.unpaired.txt"
-    local k2_rep_unpaired="${OUTDIR_RESULTS}/${out_base}.kraken.unpaired.report"
+  if [[ ${run_kraken} -eq 1 ]]; then
+    local k2_out_paired="${OUTDIR_CLASSIFY}/${out_base}.paired.kraken.output.txt"
+    local k2_rep_paired="${OUTDIR_CLASSIFY}/${out_base}.paired.kraken.report.txt"
+    local k2_out_unpaired="${OUTDIR_CLASSIFY}/${out_base}.unpaired.kraken.output.txt"
+    local k2_rep_unpaired="${OUTDIR_CLASSIFY}/${out_base}.unpaired.kraken.report.txt"
 
     if [[ ${dont_overwrite} -eq 1 && -f "${k2_out_paired}" && -f "${k2_rep_paired}" && -f "${k2_out_unpaired}" && -f "${k2_rep_unpaired}" ]]; then
       log "classify (--dont-overwrite): Kraken outputs exist; skipping."
@@ -1147,7 +1162,7 @@ HLP
       time kraken2 "${fastq_r1}" "${fastq_r2}" \
         --paired \
         --report-minimizer-data \
-        --db "${kraken_db}" \
+        --db "${kraken_index}" \
         --report "${k2_rep_paired}" \
         --output "${k2_out_paired}" \
         --confidence 0.15 \
@@ -1155,11 +1170,10 @@ HLP
         ${kraken_args}
 
       log "[ Classifying unpaired reads with Kraken2 ]"
-      # Combine unpaired from both sources when present
       if [[ -s "${fastq_fu}" ]]; then
         time kraken2 <(zcat "${fastq_unp}" "${fastq_fu}") \
           --report-minimizer-data \
-          --db "${kraken_db}" \
+          --db "${kraken_index}" \
           --report "${k2_rep_unpaired}" \
           --output "${k2_out_unpaired}" \
           --confidence 0.15 \
@@ -1168,7 +1182,7 @@ HLP
       else
         time kraken2 "${fastq_unp}" \
           --report-minimizer-data \
-          --db "${kraken_db}" \
+          --db "${kraken_index}" \
           --report "${k2_rep_unpaired}" \
           --output "${k2_out_unpaired}" \
           --confidence 0.15 \
@@ -1179,30 +1193,26 @@ HLP
   fi
 
   # ---------- Run MetaPhlAn ----------
-  if [[ $run_metaphlan -eq 1 ]]; then
-    local mpa_out="${OUTDIR_RESULTS}/${out_base}.metaphlan.txt"
-    local bowtie2out_mpa="${OUTDIR_RESULTS}/${out_base}.metaphlan.bowtie2.bz2"
+  if [[ ${run_metaphlan} -eq 1 ]]; then
+    local mpa_out="${OUTDIR_CLASSIFY}/${out_base}.metaphlan.report.txt"
+    local bowtie2out_mpa="${OUTDIR_CLASSIFY}/${out_base}.metaphlan.bowtie2.bz2"
 
     if [[ ! -f "${fastq_mrg}" || ${dont_overwrite} -eq 0 ]]; then
       log "[ Merging FASTQs for MetaPhlAn ]"
-      # Merge paired + unpaired; include FU if present
       if [[ -s "${fastq_fu}" ]]; then
         zcat "${fastq_r1}" "${fastq_r2}" "${fastq_unp}" "${fastq_fu}" 2>/dev/null | gzip -c > "${fastq_mrg}"
       else
         zcat "${fastq_r1}" "${fastq_r2}" "${fastq_unp}" 2>/dev/null | gzip -c > "${fastq_mrg}"
       fi
-    fi
-
-    if [[ ${dont_overwrite} -eq 1 && -f "${mpa_out}" && -f "${bowtie2out_mpa}" ]]; then
-      log "classify (--dont-overwrite): MetaPhlAn outputs exist; skipping."
-    else
+    
       log "[ Executing MetaPhlAn ]"
+      # # "${fastq_mrg}" \
       time metaphlan "${fastq_mrg}" \
         --nproc "${threads}" \
         --read_min_len 60 \
         --input_type fastq \
         --index "${metaphlan_index}" \
-        --bowtie2db "${bowtie2db}" \
+        --bowtie2db "${bowtie2_index}" \
         -t rel_ab_w_read_stats \
         --bowtie2out "${bowtie2out_mpa}" \
         ${metaphlan_args} \
@@ -1213,12 +1223,66 @@ HLP
   # ---------- Cleanup intermediates (default: remove) ----------
   if [[ ${keep_intermediate} -eq 0 ]]; then
     log "Removing intermediate FASTQs (use --keep-intermediate to retain):"
-    for f in "${fastq_r1}" "${fastq_r2}" "${fastq_fu}" "${fastq_unp}" "${fastq_mrg}"; do
+    for f in "${fastq_r1}" "${fastq_r2}" "${fastq_fu}" "${fastq_unp}" "${fastq_mrg}" ; do
       [[ -e "$f" ]] && rm -f "$f"
     done
   fi
 
   log "classify done (classifier=${classifier})"
+}
+
+cmd_summarize() {
+  local sample_id=""
+  local outdir_results="${OUTDIR}/results"
+  local classif_dir="${OUTDIR}/classification_stats"
+  local filter_stats_dir="${OUTDIR}/filter_stats"
+  local verbose_flag=
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --sample-id)                 sample_id="${2:-}"; shift 2 ;;
+      --results-dir)               outdir_results="${2:-}"; shift 2 ;;
+      --classification-stats-dir)  classif_dir="${2:-}"; shift 2 ;;
+      --filter-stats-dir)          filter_stats_dir="${2:-}"; shift 2 ;;
+      -v|--verbose)                verbose_flag="--verbose"; shift ;;
+      -h|--help)
+        cat <<'HLP'
+Usage: pathseq-t2t summarize --sample-id <id>
+       [--results-dir <dir>] [--classification-stats-dir <dir>] [--filter-stats-dir <dir>] [-v]
+
+Description:
+  Combine filtering + classification summaries and write normalized Kraken2/MetaPhlAn tables.
+
+Inputs:
+  - <OUTDIR>/filter_stats/*           (PathSeq/T2T filter metrics + flagstats)
+  - <OUTDIR>/classification_stats/*   (raw Kraken2/MetaPhlAn reports)
+
+Outputs (to --results-dir):
+  - <sample>.summary.tsv
+  - <sample>.kraken.rpm.txt        (if Kraken2 present)
+  - <sample>.metaphlan.rpm.txt     (if MetaPhlAn present)
+HLP
+        return 0 ;;
+      *) die "summarize: unknown arg '$1'" ;;
+    esac
+  done
+
+  [[ -n "${sample_id}" ]] || die "summarize: --sample-id is required"
+
+  mkdir -p "${outdir_results}"
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "${SCRIPT_DIR%/src}/scripts/pst2t_summarize.py" \
+      --filter-stats-dir "${filter_stats_dir}" \
+      --classification-stats-dir "${classif_dir}" \
+      --results-dir "${outdir_results}" \
+      --sample-id "${sample_id}" \
+      ${verbose_flag}
+  else
+    die "python3 not found on PATH."
+  fi
+
+  log "summarize done"
 }
 
 
@@ -1229,6 +1293,7 @@ case "${cmd}" in
   qcfilter)    cmd_qcfilter "$@" ;;
   t2tfilter)   cmd_t2tfilter "$@" ;;
   classify)    cmd_classify "$@" ;;
+  summarize)   cmd_summarize "$@" ;;
   -h|--help|help) usage ;;
   *) die "Unknown command: ${cmd}. Run '${PROG} --help' for usage." ;;
 esac
