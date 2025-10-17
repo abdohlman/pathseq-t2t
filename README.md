@@ -67,10 +67,11 @@ PathSeq-T2T is broken into five steps, given by five commands:
 
 Please note that each of these steps requires different amounts of memory, so if you are running this on an HPC environment, its recommended you run these steps separately. Memory recommendations are given below:
 
-prefilter: 50-100Mb
-qcfilter: 32-64Gb
-t2tfilter: 4-8Gb
-classify: 128Gb for kraken2, 32-64Gb for MetaPhlAn4
+* prefilter -> 50-100Mb
+* qcfilter -> 32-64Gb
+* t2tfilter -> 4-8Gb
+* classify -> 128Gb for kraken2, 32-64Gb for MetaPhlAn4
+* summarize -> <1G
 
 ---
 
