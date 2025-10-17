@@ -19,3 +19,6 @@ pst2t_output/
 .venv
 conda-env/
 GIT
+bin/
+examples/
+non_human_decoys.bed
