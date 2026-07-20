@@ -218,7 +218,7 @@ HLP
   trap on_exit_qcfilter EXIT
 
   # ---------- Pre-flight: validate input BAMs ----------
-  bam_check_or_die "${bam_input_unaligned}" "qcfilter: bam_input_unaligned"
+  ubam_check_or_die "${bam_input_unaligned}" "qcfilter: bam_input_unaligned"
   if [[ ${have_decoys} -eq 1 ]]; then
     bam_check_or_die "${bam_input_decoys}" "qcfilter: bam_input_decoys"
   fi
@@ -247,19 +247,22 @@ HLP
       [[ -f "${bam_input_decoys_rvt}" ]] || die "RevertSam failed for decoys BAM."
 
       log "Running QC-filtering on decoys reads"
-      log_cmd gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark \
-        --input "${bam_input_decoys_rvt}" \
-        --tmp-dir "${TMPDIR_OPT}" \
-        --spark-master "local[${threads}]" \
-        --bam-partition-size 0 \
-        --is-host-aligned true \
-        --kmer-file "${HOSTDIR_OPT}/pathseq_host.bfi" \
-        --filter-bwa-image "${HOSTDIR_OPT}/pathseq_host.fa.img" \
-        --min-clipped-read-length "${min_clipped_read_length}" \
-        --filter-metrics "${filter_metrics_decoys}" \
-        --paired-output "${bam_paired_decoys_filt}" \
-        --unpaired-output "${bam_unpaired_decoys_filt}" \
-        "${psfilterspark_args_ary[@]}"
+      local -a decoys_filter_cmd=(
+        gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark
+        --input "${bam_input_decoys_rvt}"
+        --tmp-dir "${TMPDIR_OPT}"
+        --spark-master "local[${threads}]"
+        --bam-partition-size 0
+        --is-host-aligned true
+        --kmer-file "${HOSTDIR_OPT}/pathseq_host.bfi"
+        --filter-bwa-image "${HOSTDIR_OPT}/pathseq_host.fa.img"
+        --min-clipped-read-length "${min_clipped_read_length}"
+        --filter-metrics "${filter_metrics_decoys}"
+        --paired-output "${bam_paired_decoys_filt}"
+        --unpaired-output "${bam_unpaired_decoys_filt}"
+      )
+      ((${#psfilterspark_args_ary[@]})) && decoys_filter_cmd+=("${psfilterspark_args_ary[@]}")
+      log_cmd "${decoys_filter_cmd[@]}"
 
       [[ -f "${filter_metrics_decoys}" ]] || die "Decoys PathSeqFilterSpark failed (no metrics)."
 
@@ -287,19 +290,22 @@ HLP
     log "STEP 1B (--dont-overwrite): outputs exist, skipping unaligned QC-filtering."
   else
     log "Running QC-filtering on unaligned reads"
-    time gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark \
-      --input "${bam_input_unaligned}" \
-      --tmp-dir "${TMPDIR_OPT}" \
-      --spark-master "local[${threads}]" \
-      --bam-partition-size 4000000 \
-      --is-host-aligned true \
-      --kmer-file "${HOSTDIR_OPT}/pathseq_host.bfi" \
-      --filter-bwa-image "${HOSTDIR_OPT}/pathseq_host.fa.img" \
-      --min-clipped-read-length "${min_clipped_read_length}" \
-      --filter-metrics "${filter_metrics_unaligned}" \
-      --paired-output "${bam_paired_unaligned_filt}" \
-      --unpaired-output "${bam_unpaired_unaligned_filt}" \
-      "${psfilterspark_args_ary[@]}"
+    local -a unaligned_filter_cmd=(
+      gatk --java-options "-Xmx${ram_gb}G" PathSeqFilterSpark
+      --input "${bam_input_unaligned}"
+      --tmp-dir "${TMPDIR_OPT}"
+      --spark-master "local[${threads}]"
+      --bam-partition-size 4000000
+      --is-host-aligned true
+      --kmer-file "${HOSTDIR_OPT}/pathseq_host.bfi"
+      --filter-bwa-image "${HOSTDIR_OPT}/pathseq_host.fa.img"
+      --min-clipped-read-length "${min_clipped_read_length}"
+      --filter-metrics "${filter_metrics_unaligned}"
+      --paired-output "${bam_paired_unaligned_filt}"
+      --unpaired-output "${bam_unpaired_unaligned_filt}"
+    )
+    ((${#psfilterspark_args_ary[@]})) && unaligned_filter_cmd+=("${psfilterspark_args_ary[@]}")
+    time "${unaligned_filter_cmd[@]}"
 
     if [[ -f "${bam_paired_unaligned_filt}.sbi" ]]; then
       ubam_check_or_die "${bam_paired_unaligned_filt}"   "qcfilter: unaligned paired"
