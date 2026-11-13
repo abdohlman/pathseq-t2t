@@ -192,7 +192,7 @@ HLP
 
   # Decompress contigs if only gzipped copy exists (sbatch wrapper may have gzipped them)
   if [[ ! -s "${mh_contigs}" && -s "${mh_contigs}.gz" ]]; then
-    gunzip -k "${mh_contigs}.gz"
+    gunzip -c "${mh_contigs}.gz" > "${mh_contigs}"
   fi
 
   # ---------- (4) bowtie2-build + realignment ----------
